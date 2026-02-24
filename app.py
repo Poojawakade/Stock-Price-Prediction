@@ -1,216 +1,359 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
-import bcrypt
-import random
-import smtplib
+import numpy as np
 import os
+import joblib
+import plotly.graph_objects as go
+import hashlib
+import smtplib
+import random
 from email.mime.text import MIMEText
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
 
-# ==============================
-# CONFIG
-# ==============================
+# =============================
+# CONFIGURATION
+# =============================
+st.set_page_config(page_title="Stock Prediction System", layout="wide")
 
-st.set_page_config(page_title="Stock Dashboard", layout="wide")
+DATA_PATH = "uploaded_stock_data.csv"
+MODEL_PATH = "model.pkl"
+USER_DB = "users.csv"
 
-DATA_PATH = "synthetic_stock_dataset_1000.csv"
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin123"
 
-# Gmail credentials (REPLACE THESE)
-SENDER_EMAIL = "yourgmail@gmail.com"
-APP_PASSWORD = "your_16_digit_app_password"
+# -------- EMAIL CONFIG --------
+SENDER_EMAIL = "your_email@gmail.com"
+SENDER_PASSWORD = "your_16_digit_app_password"
 
-# ==============================
-# SESSION STATE INIT
-# ==============================
+# =============================
+# PASSWORD HASHING
+# =============================
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
-if "users" not in st.session_state:
-    st.session_state.users = {}  # {email: hashed_password}
+def verify_password(stored_password, provided_password):
+    return stored_password == hash_password(provided_password)
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if "reset_mode" not in st.session_state:
-    st.session_state.reset_mode = False
-
-if "otp_sent" not in st.session_state:
-    st.session_state.otp_sent = False
-
-if "generated_otp" not in st.session_state:
-    st.session_state.generated_otp = None
-
-# ==============================
-# EMAIL FUNCTION
-# ==============================
-
+# =============================
+# SEND OTP EMAIL
+# =============================
 def send_otp_email(receiver_email, otp):
-    message = MIMEText(f"Your OTP for password reset is: {otp}")
-    message["Subject"] = "Password Reset OTP"
-    message["From"] = SENDER_EMAIL
-    message["To"] = receiver_email
+    subject = "Password Reset OTP"
+    body = f"Your OTP for password reset is: {otp}"
 
-    try:
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.starttls()
-        server.login(SENDER_EMAIL, APP_PASSWORD)
-        server.send_message(message)
-        server.quit()
-        return True
-    except Exception as e:
-        st.error(f"Email failed: {e}")
-        return False
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = SENDER_EMAIL
+    msg["To"] = receiver_email
 
-# ==============================
-# LOGIN PAGE
-# ==============================
+    server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+    server.login(SENDER_EMAIL, SENDER_PASSWORD)
+    server.sendmail(SENDER_EMAIL, receiver_email, msg.as_string())
+    server.quit()
 
-if not st.session_state.logged_in:
+# =============================
+# TRAIN MODEL
+# =============================
+def train_model(df):
+    X = df[["Close"]]
+    y = df["Target_Next_Close"]
 
-    st.title("🔐 Stock Prediction Login")
-
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
-
-    col1, col2 = st.columns([3, 1])
-    with col2:
-        if st.button("Forgot Password?"):
-            st.session_state.reset_mode = True
-
-    if st.button("Login"):
-        if email in st.session_state.users:
-            hashed = st.session_state.users[email]
-            if bcrypt.checkpw(password.encode(), hashed):
-                st.session_state.logged_in = True
-                st.success("Login Successful!")
-                st.rerun()
-            else:
-                st.error("Incorrect Password")
-        else:
-            st.error("User not found")
-
-    st.divider()
-
-    st.subheader("📝 Register")
-
-    new_email = st.text_input("Register Email")
-    new_password = st.text_input("Register Password", type="password")
-
-    if st.button("Register"):
-        if new_email not in st.session_state.users:
-            hashed_pw = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt())
-            st.session_state.users[new_email] = hashed_pw
-            st.success("User Registered Successfully!")
-        else:
-            st.error("User already exists")
-
-# ==============================
-# FORGOT PASSWORD PAGE
-# ==============================
-
-if st.session_state.reset_mode:
-
-    st.title("🔑 Reset Password")
-
-    reset_email = st.text_input("Enter Registered Email")
-
-    if st.button("Send OTP"):
-        if reset_email in st.session_state.users:
-            otp = random.randint(100000, 999999)
-            success = send_otp_email(reset_email, otp)
-            if success:
-                st.session_state.generated_otp = str(otp)
-                st.session_state.otp_sent = True
-                st.success("OTP sent successfully!")
-        else:
-            st.error("Email not registered")
-
-    if st.session_state.otp_sent:
-        entered_otp = st.text_input("Enter OTP")
-        new_password = st.text_input("New Password", type="password")
-
-        if st.button("Reset Password"):
-            if entered_otp == st.session_state.generated_otp:
-                hashed_pw = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt())
-                st.session_state.users[reset_email] = hashed_pw
-                st.success("Password Reset Successful!")
-                st.session_state.reset_mode = False
-                st.session_state.otp_sent = False
-                st.rerun()
-            else:
-                st.error("Invalid OTP")
-
-# ==============================
-# MAIN DASHBOARD
-# ==============================
-
-if st.session_state.logged_in:
-
-    st.title("📊 Stock Dashboard")
-
-    df = pd.read_csv(DATA_PATH)
-    df['Date'] = pd.to_datetime(df['Date'])
-
-    # ==========================
-    # KPIs
-    # ==========================
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric("Total Records", len(df))
-    col2.metric("Average Close Price", round(df["Close"].mean(), 2))
-    col3.metric("Max Volume", int(df["Volume"].max()))
-
-    st.divider()
-
-    # ==========================
-    # Chart
-    # ==========================
-
-    st.subheader("📈 Historical Price Trend")
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=df['Date'],
-        y=df['Close'],
-        mode='lines',
-        name="Close Price"
-    ))
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.divider()
-
-    # ==========================
-    # STOCK DROPDOWN
-    # ==========================
-
-    stock = st.selectbox(
-        "Select Stock",
-        df["Stock"].unique()
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
     )
 
-    # ==========================
-    # PREDICTION FUNCTION
-    # ==========================
+    model = LinearRegression()
+    model.fit(X_train, y_train)
 
-    def predict_next_5_days():
-        last_price = df[df["Stock"] == stock]["Close"].iloc[-1]
-        predictions = []
-        for i in range(5):
-            change = random.uniform(-5, 5)
-            last_price += change
-            predictions.append(round(last_price, 2))
-        return predictions
+    joblib.dump(model, MODEL_PATH)
 
-    if st.button("Predict Next 5 Days"):
+    return model.score(X_test, y_test)
 
-        preds = predict_next_5_days()
+# =============================
+# PREDICT 5 DAYS
+# =============================
+def predict_next_5_days(model, last_price):
+    predictions = []
+    current_price = last_price
 
-        st.subheader("🔮 Next 5 Days Prediction")
+    for _ in range(5):
+        pred = model.predict([[current_price]])[0]
+        predictions.append(pred)
+        current_price = pred
 
-        for i, p in enumerate(preds):
-            st.write(f"Day {i+1}: {p}")
+    return predictions
 
-    st.divider()
+# =============================
+# SESSION INIT
+# =============================
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.role = None
+
+# =============================
+# MAIN MENU
+# =============================
+st.title("📈 Stock Price Prediction System")
+
+menu = st.sidebar.selectbox("Select Role", ["Home", "Admin Login", "User Login"])
+
+# =================================================
+# HOME
+# =================================================
+if menu == "Home":
+    st.write("Welcome to the AI Stock Prediction Platform 🚀")
+
+# =================================================
+# ADMIN LOGIN
+# =================================================
+elif menu == "Admin Login":
+
+    st.subheader("🔐 Admin Login")
+
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
+    if st.button("Login"):
+        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+            st.session_state.logged_in = True
+            st.session_state.role = "admin"
+            st.success("Admin Login Successful ✅")
+        else:
+            st.error("Invalid Credentials")
+
+# ---------------- ADMIN DASHBOARD ----------------
+if st.session_state.logged_in and st.session_state.role == "admin":
+
+    st.subheader("📂 Upload Dataset")
+    uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
+
+    if uploaded_file:
+        df = pd.read_csv(uploaded_file)
+        df.to_csv(DATA_PATH, index=False)
+        st.success("Dataset Uploaded Successfully ✅")
+        st.dataframe(df.head())
+
+    if os.path.exists(DATA_PATH):
+        df = pd.read_csv(DATA_PATH)
+
+        st.subheader("🤖 Train Model")
+
+        if st.button("Train Model"):
+            if "Target_Next_Close" not in df.columns:
+                st.error("Dataset must contain 'Target_Next_Close'")
+            else:
+                acc = train_model(df)
+                st.success(f"Model Trained ✅ | Accuracy: {round(acc*100,2)}%")
 
     if st.button("Logout"):
         st.session_state.logged_in = False
+        st.session_state.role = None
+        st.rerun()
+
+# =================================================
+# USER LOGIN / REGISTER
+# =================================================
+elif menu == "User Login":
+
+    option = st.radio("Select Option", ["New User", "Existing User"])
+
+    # ---------------- REGISTER ----------------
+    if option == "New User":
+
+        st.subheader("📝 Register")
+
+        name = st.text_input("Full Name")
+        email = st.text_input("Email")
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+
+        if st.button("Register"):
+
+            hashed_password = hash_password(password)
+
+            new_user = pd.DataFrame([[name, email, username, hashed_password]],
+                                    columns=["Name", "Email", "Username", "Password"])
+
+            if os.path.exists(USER_DB):
+                users = pd.read_csv(USER_DB)
+
+                if username in users["Username"].values:
+                    st.error("Username already exists")
+                else:
+                    users = pd.concat([users, new_user], ignore_index=True)
+                    users.to_csv(USER_DB, index=False)
+                    st.success("Registered Successfully ✅")
+            else:
+                new_user.to_csv(USER_DB, index=False)
+                st.success("Registered Successfully ✅")
+
+    # ---------------- LOGIN ----------------
+    elif option == "Existing User":
+
+        st.subheader("🔐 User Login")
+
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+
+        col1, col2 = st.columns([3,1])
+
+        with col2:
+            if st.button("Forgot Password?"):
+                st.session_state.show_reset = True
+
+        if st.button("Login"):
+
+            if not os.path.exists(USER_DB):
+                st.error("No users registered.")
+            else:
+                users = pd.read_csv(USER_DB)
+                user_row = users[users["Username"] == username]
+
+                if not user_row.empty and verify_password(
+                        user_row.iloc[0]["Password"], password):
+
+                    st.session_state.logged_in = True
+                    st.session_state.role = "user"
+                    st.success("Login Successful ✅")
+                else:
+                    st.error("Invalid Credentials")
+
+        # ---------------- RESET FLOW ----------------
+        if "show_reset" in st.session_state and st.session_state.show_reset:
+
+            st.divider()
+            st.subheader("🔑 Reset Password")
+
+            reset_email = st.text_input("Enter Registered Email")
+
+            if st.button("Send OTP"):
+
+                if os.path.exists(USER_DB):
+                    users = pd.read_csv(USER_DB)
+                    user_row = users[users["Email"] == reset_email]
+
+                    if not user_row.empty:
+
+                        otp = str(random.randint(100000, 999999))
+                        st.session_state.otp = otp
+                        st.session_state.reset_email = reset_email
+
+                        try:
+                            send_otp_email(reset_email, otp)
+                            st.success("OTP Sent to Registered Email ✅")
+                        except Exception as e:
+                            st.error(f"Email sending failed: {e}")
+                    else:
+                        st.error("Email not found.")
+
+            if "otp" in st.session_state:
+
+                entered_otp = st.text_input("Enter OTP")
+
+                if st.button("Verify OTP"):
+
+                    if entered_otp == st.session_state.otp:
+                        st.session_state.otp_verified = True
+                        st.success("OTP Verified ✅")
+                    else:
+                        st.error("Invalid OTP")
+
+            if "otp_verified" in st.session_state and st.session_state.otp_verified:
+
+                new_password = st.text_input("New Password", type="password")
+
+                if st.button("Update Password"):
+
+                    users = pd.read_csv(USER_DB)
+                    users.loc[
+                        users["Email"] == st.session_state.reset_email,
+                        "Password"
+                    ] = hash_password(new_password)
+
+                    users.to_csv(USER_DB, index=False)
+
+                    del st.session_state.otp
+                    del st.session_state.otp_verified
+                    del st.session_state.reset_email
+                    del st.session_state.show_reset
+
+                    st.success("Password Updated Successfully ✅")
+
+# =================================================
+# USER DASHBOARD
+# =================================================
+if st.session_state.logged_in and st.session_state.role == "user":
+
+    st.title("📊 Stock Dashboard")
+
+    if not os.path.exists(DATA_PATH):
+        st.error("Dataset not uploaded by admin.")
+        st.stop()
+
+    df = pd.read_csv(DATA_PATH)
+    df["Date"] = pd.to_datetime(df["Date"])
+
+    # KPIs
+    st.subheader("📌 Market Overview")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("Total Records", len(df))
+    col2.metric("Avg Close", round(df["Close"].mean(), 2))
+    col3.metric("Highest Price", round(df["High"].max(), 2))
+    col4.metric("Lowest Price", round(df["Low"].min(), 2))
+
+    st.divider()
+
+    # Stock Selection
+    stock_list = df["Stock"].unique()
+    selected_stock = st.selectbox("Select Stock", stock_list)
+    stock_df = df[df["Stock"] == selected_stock]
+
+    # Chart
+    st.subheader("📈 Historical Chart")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=stock_df["Date"],
+        y=stock_df["Close"],
+        mode="lines",
+        name="Close"
+    ))
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Prediction
+    if st.button("🔮 Predict Next 5 Days"):
+
+        if not os.path.exists(MODEL_PATH):
+            st.error("Model not trained.")
+            st.stop()
+
+        model = joblib.load(MODEL_PATH)
+        last_price = stock_df["Close"].values[-1]
+        predictions = predict_next_5_days(model, last_price)
+
+        st.subheader("📅 5-Day Forecast")
+
+        for i, p in enumerate(predictions):
+            st.write(f"Day {i+1}: ₹ {round(p,2)}")
+
+        avg_pred = np.mean(predictions)
+
+        if avg_pred > last_price * 1.02:
+            recommendation = "🟢 BUY"
+        elif avg_pred < last_price * 0.98:
+            recommendation = "🔴 SELL"
+        else:
+            recommendation = "🟡 HOLD"
+
+        st.subheader("📢 Recommendation")
+        st.success(recommendation)
+
+    if st.button("Logout"):
+        st.session_state.logged_in = False
+        st.session_state.role = None
         st.rerun()
