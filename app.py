@@ -1,287 +1,91 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
-import os
-import joblib
-import hashlib
-import smtplib
 import random
-from email.mime.text import MIMEText
-from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
+import string
 
-# Load .env for local development
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except:
-    pass
+st.set_page_config(page_title="Login System", page_icon="🔐")
 
-# =============================
-# CONFIGURATION
-# =============================
-st.set_page_config(page_title="Stock Prediction System", layout="wide")
+# ---------------------------
+# Dummy user database
+# ---------------------------
+if "users" not in st.session_state:
+    st.session_state.users = {
+        "user@gmail.com": "password123"
+    }
 
-DATA_PATH = "uploaded_stock_data.csv"
-MODEL_PATH = "model.pkl"
-USER_DB = "users.csv"
+if "otp" not in st.session_state:
+    st.session_state.otp = None
 
-ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "admin123"
+if "reset_email" not in st.session_state:
+    st.session_state.reset_email = None
 
-# =============================
-# PASSWORD HASHING
-# =============================
-def hash_password(password):
-    return hashlib.sha256(password.encode()).hexdigest()
-
-def verify_password(stored_password, provided_password):
-    return stored_password == hash_password(provided_password)
-
-# =============================
-# HYBRID EMAIL DETECTION
-# =============================
-def get_email_credentials():
-    try:
-        if "EMAIL" in st.secrets and "EMAIL_PASSWORD" in st.secrets:
-            return st.secrets["EMAIL"], st.secrets["EMAIL_PASSWORD"]
-    except:
-        pass
-
-    email = os.getenv("EMAIL")
-    password = os.getenv("EMAIL_PASSWORD")
-
-    if email and password:
-        return email, password
-
-    return None, None
+if "otp_verified" not in st.session_state:
+    st.session_state.otp_verified = False
 
 
-def send_otp_email(receiver_email, otp):
-    sender_email, sender_password = get_email_credentials()
+# ---------------------------
+# Helper function to generate OTP
+# ---------------------------
+def generate_otp():
+    return ''.join(random.choices(string.digits, k=6))
 
-    if not sender_email or not sender_password:
-        st.error("❌ Email credentials not configured.")
-        return False
 
-    try:
-        msg = MIMEText(f"Your OTP for password reset is: {otp}")
-        msg["Subject"] = "Password Reset OTP"
-        msg["From"] = sender_email
-        msg["To"] = receiver_email
+# ---------------------------
+# Tabs: Login / Forgot Password
+# ---------------------------
+tab1, tab2 = st.tabs(["Login", "Forgot Password"])
 
-        server = smtplib.SMTP("smtp.gmail.com", 587)
-        server.ehlo()
-        server.starttls()
-        server.ehlo()
-        server.login(sender_email, sender_password)
-        server.sendmail(sender_email, receiver_email, msg.as_string())
-        server.quit()
+# ===========================
+# LOGIN TAB
+# ===========================
+with tab1:
+    st.subheader("Login")
 
-        return True
-
-    except Exception as e:
-        st.error(f"Email Error: {e}")
-        return False
-
-# =============================
-# MODEL FUNCTIONS
-# =============================
-def train_model(df):
-    X = df[["Close"]]
-    y = df["Target_Next_Close"]
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
-
-    model = LinearRegression()
-    model.fit(X_train, y_train)
-    joblib.dump(model, MODEL_PATH)
-
-    return model.score(X_test, y_test)
-
-# =============================
-# SESSION INIT
-# =============================
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.role = None
-
-# =============================
-# MAIN MENU
-# =============================
-st.title("📈 Stock Price Prediction System")
-menu = st.sidebar.selectbox("Select Role", ["Home", "Admin Login", "User Login"])
-
-# =================================================
-# HOME
-# =================================================
-if menu == "Home":
-    st.write("Welcome to the AI Stock Prediction Platform 🚀")
-
-# =================================================
-# ADMIN LOGIN
-# =================================================
-elif menu == "Admin Login":
-
-    st.subheader("🔐 Admin Login")
-
-    username = st.text_input("Username")
+    email = st.text_input("Email")
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-            st.session_state.logged_in = True
-            st.session_state.role = "admin"
-            st.success("Admin Login Successful ✅")
+        if email in st.session_state.users and st.session_state.users[email] == password:
+            st.success("Login Successful 🎉")
         else:
-            st.error("Invalid Credentials")
+            st.error("Invalid Email or Password")
 
-# ---------------- ADMIN DASHBOARD ----------------
-if st.session_state.logged_in and st.session_state.role == "admin":
 
-    st.subheader("📂 Upload Dataset")
-    uploaded_file = st.file_uploader("Upload CSV", type=["csv"])
+# ===========================
+# FORGOT PASSWORD TAB
+# ===========================
+with tab2:
+    st.subheader("Forgot Password")
 
-    if uploaded_file:
-        df = pd.read_csv(uploaded_file)
-        df.to_csv(DATA_PATH, index=False)
-        st.success("Dataset Uploaded Successfully ✅")
-        st.dataframe(df.head())
+    reset_email = st.text_input("Enter your registered email")
 
-    if os.path.exists(DATA_PATH):
-        df = pd.read_csv(DATA_PATH)
+    if st.button("Send OTP"):
+        if reset_email in st.session_state.users:
+            otp = generate_otp()
+            st.session_state.otp = otp
+            st.session_state.reset_email = reset_email
+            st.session_state.otp_verified = False
 
-        if st.button("Train Model"):
-            if "Target_Next_Close" not in df.columns:
-                st.error("Dataset must contain 'Target_Next_Close'")
+            # 🔥 OTP SHOWN ON SCREEN (Demo Mode)
+            st.info(f"Your OTP is: {otp}")
+
+        else:
+            st.error("Email not registered")
+
+    if st.session_state.otp:
+        entered_otp = st.text_input("Enter OTP")
+
+        if st.button("Verify OTP"):
+            if entered_otp == st.session_state.otp:
+                st.session_state.otp_verified = True
+                st.success("OTP Verified ✅")
             else:
-                acc = train_model(df)
-                st.success(f"Model Trained ✅ | Accuracy: {round(acc*100,2)}%")
+                st.error("Invalid OTP")
 
-    if st.button("Logout"):
-        st.session_state.logged_in = False
-        st.session_state.role = None
-        st.rerun()
+    if st.session_state.otp_verified:
+        new_password = st.text_input("Enter New Password", type="password")
 
-# =================================================
-# USER LOGIN
-# =================================================
-elif menu == "User Login":
-
-    option = st.radio("Select Option", ["New User", "Existing User"])
-
-    # ================= REGISTER =================
-    if option == "New User":
-
-        st.subheader("📝 Register")
-
-        name = st.text_input("Full Name")
-        email = st.text_input("Email")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-
-        if st.button("Register"):
-
-            hashed_password = hash_password(password)
-            new_user = pd.DataFrame([[name, email, username, hashed_password]],
-                                    columns=["Name", "Email", "Username", "Password"])
-
-            if os.path.exists(USER_DB):
-                users = pd.read_csv(USER_DB)
-
-                if username in users["Username"].values:
-                    st.error("Username already exists")
-                else:
-                    users = pd.concat([users, new_user], ignore_index=True)
-                    users.to_csv(USER_DB, index=False)
-                    st.success("Registered Successfully ✅")
-            else:
-                new_user.to_csv(USER_DB, index=False)
-                st.success("Registered Successfully ✅")
-
-    # ================= LOGIN =================
-    elif option == "Existing User":
-
-        st.subheader("🔐 User Login")
-
-        username = st.text_input("Username")
-
-        col1, col2 = st.columns([4,1])
-        with col1:
-            password = st.text_input("Password", type="password")
-        with col2:
-            forgot_clicked = st.button("Forgot?")
-
-        # LOGIN
-        if st.button("Login"):
-            if os.path.exists(USER_DB):
-                users = pd.read_csv(USER_DB)
-                user_row = users[users["Username"] == username]
-
-                if not user_row.empty and verify_password(
-                        user_row.iloc[0]["Password"], password):
-                    st.session_state.logged_in = True
-                    st.session_state.role = "user"
-                    st.success("Login Successful ✅")
-                else:
-                    st.error("Invalid Credentials")
-            else:
-                st.error("No users registered.")
-
-        # RESET FLOW
-        if forgot_clicked:
-            st.session_state.show_reset = True
-
-        if "show_reset" in st.session_state and st.session_state.show_reset:
-
-            st.divider()
-            st.subheader("🔑 Reset Password")
-
-            reset_email = st.text_input("Enter Registered Email")
-
-            if st.button("Send OTP"):
-                users = pd.read_csv(USER_DB)
-                user_row = users[users["Email"] == reset_email]
-
-                if not user_row.empty:
-                    otp = str(random.randint(100000, 999999))
-                    st.session_state.otp = otp
-                    st.session_state.reset_email = reset_email
-
-                    if send_otp_email(reset_email, otp):
-                        st.success("OTP Sent Successfully ✅")
-                else:
-                    st.error("Email not found.")
-
-            if "otp" in st.session_state:
-                entered_otp = st.text_input("Enter OTP")
-
-                if st.button("Verify OTP"):
-                    if entered_otp == st.session_state.otp:
-                        st.session_state.otp_verified = True
-                        st.success("OTP Verified ✅")
-                    else:
-                        st.error("Invalid OTP")
-
-            if "otp_verified" in st.session_state and st.session_state.otp_verified:
-
-                new_password = st.text_input("New Password", type="password")
-
-                if st.button("Update Password"):
-
-                    users = pd.read_csv(USER_DB)
-                    users.loc[
-                        users["Email"] == st.session_state.reset_email,
-                        "Password"
-                    ] = hash_password(new_password)
-
-                    users.to_csv(USER_DB, index=False)
-
-                    st.success("Password Updated Successfully ✅")
-
-                    del st.session_state.otp
-                    del st.session_state.otp_verified
-                    del st.session_state.reset_email
-                    del st.session_state.show_reset
+        if st.button("Reset Password"):
+            st.session_state.users[st.session_state.reset_email] = new_password
+            st.success("Password Reset Successful 🎉")
+            st.session_state.otp = None
+            st.session_state.otp_verified = False
