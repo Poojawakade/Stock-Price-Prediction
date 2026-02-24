@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import os
 import joblib
-import plotly.graph_objects as go
 import hashlib
 import smtplib
 import random
@@ -11,7 +10,7 @@ from email.mime.text import MIMEText
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 
-# Optional for local development
+# Load .env for local development
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -40,17 +39,15 @@ def verify_password(stored_password, provided_password):
     return stored_password == hash_password(provided_password)
 
 # =============================
-# HYBRID EMAIL CONFIG
+# HYBRID EMAIL DETECTION
 # =============================
 def get_email_credentials():
-    # 1️⃣ Try Streamlit Cloud secrets
     try:
         if "EMAIL" in st.secrets and "EMAIL_PASSWORD" in st.secrets:
             return st.secrets["EMAIL"], st.secrets["EMAIL_PASSWORD"]
     except:
         pass
 
-    # 2️⃣ Try local .env
     email = os.getenv("EMAIL")
     password = os.getenv("EMAIL_PASSWORD")
 
@@ -88,7 +85,7 @@ def send_otp_email(receiver_email, otp):
         return False
 
 # =============================
-# TRAIN MODEL
+# MODEL FUNCTIONS
 # =============================
 def train_model(df):
     X = df[["Close"]]
@@ -100,24 +97,9 @@ def train_model(df):
 
     model = LinearRegression()
     model.fit(X_train, y_train)
-
     joblib.dump(model, MODEL_PATH)
 
     return model.score(X_test, y_test)
-
-# =============================
-# PREDICT 5 DAYS
-# =============================
-def predict_next_5_days(model, last_price):
-    predictions = []
-    current_price = last_price
-
-    for _ in range(5):
-        pred = model.predict([[current_price]])[0]
-        predictions.append(pred)
-        current_price = pred
-
-    return predictions
 
 # =============================
 # SESSION INIT
@@ -171,8 +153,6 @@ if st.session_state.logged_in and st.session_state.role == "admin":
     if os.path.exists(DATA_PATH):
         df = pd.read_csv(DATA_PATH)
 
-        st.subheader("🤖 Train Model")
-
         if st.button("Train Model"):
             if "Target_Next_Close" not in df.columns:
                 st.error("Dataset must contain 'Target_Next_Close'")
@@ -186,13 +166,13 @@ if st.session_state.logged_in and st.session_state.role == "admin":
         st.rerun()
 
 # =================================================
-# USER LOGIN + RESET
+# USER LOGIN
 # =================================================
 elif menu == "User Login":
 
     option = st.radio("Select Option", ["New User", "Existing User"])
 
-    # REGISTER
+    # ================= REGISTER =================
     if option == "New User":
 
         st.subheader("📝 Register")
@@ -221,14 +201,20 @@ elif menu == "User Login":
                 new_user.to_csv(USER_DB, index=False)
                 st.success("Registered Successfully ✅")
 
-    # LOGIN
+    # ================= LOGIN =================
     elif option == "Existing User":
 
         st.subheader("🔐 User Login")
 
         username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
 
+        col1, col2 = st.columns([4,1])
+        with col1:
+            password = st.text_input("Password", type="password")
+        with col2:
+            forgot_clicked = st.button("Forgot?")
+
+        # LOGIN
         if st.button("Login"):
             if os.path.exists(USER_DB):
                 users = pd.read_csv(USER_DB)
@@ -244,13 +230,18 @@ elif menu == "User Login":
             else:
                 st.error("No users registered.")
 
-        st.divider()
-        st.subheader("🔑 Forgot Password")
+        # RESET FLOW
+        if forgot_clicked:
+            st.session_state.show_reset = True
 
-        reset_email = st.text_input("Enter Registered Email")
+        if "show_reset" in st.session_state and st.session_state.show_reset:
 
-        if st.button("Send OTP"):
-            if os.path.exists(USER_DB):
+            st.divider()
+            st.subheader("🔑 Reset Password")
+
+            reset_email = st.text_input("Enter Registered Email")
+
+            if st.button("Send OTP"):
                 users = pd.read_csv(USER_DB)
                 user_row = users[users["Email"] == reset_email]
 
@@ -263,35 +254,34 @@ elif menu == "User Login":
                         st.success("OTP Sent Successfully ✅")
                 else:
                     st.error("Email not found.")
-            else:
-                st.error("No users registered.")
 
-        if "otp" in st.session_state:
-            entered_otp = st.text_input("Enter OTP")
+            if "otp" in st.session_state:
+                entered_otp = st.text_input("Enter OTP")
 
-            if st.button("Verify OTP"):
-                if entered_otp == st.session_state.otp:
-                    st.session_state.otp_verified = True
-                    st.success("OTP Verified ✅")
-                else:
-                    st.error("Invalid OTP")
+                if st.button("Verify OTP"):
+                    if entered_otp == st.session_state.otp:
+                        st.session_state.otp_verified = True
+                        st.success("OTP Verified ✅")
+                    else:
+                        st.error("Invalid OTP")
 
-        if "otp_verified" in st.session_state and st.session_state.otp_verified:
+            if "otp_verified" in st.session_state and st.session_state.otp_verified:
 
-            new_password = st.text_input("New Password", type="password")
+                new_password = st.text_input("New Password", type="password")
 
-            if st.button("Update Password"):
+                if st.button("Update Password"):
 
-                users = pd.read_csv(USER_DB)
-                users.loc[
-                    users["Email"] == st.session_state.reset_email,
-                    "Password"
-                ] = hash_password(new_password)
+                    users = pd.read_csv(USER_DB)
+                    users.loc[
+                        users["Email"] == st.session_state.reset_email,
+                        "Password"
+                    ] = hash_password(new_password)
 
-                users.to_csv(USER_DB, index=False)
+                    users.to_csv(USER_DB, index=False)
 
-                st.success("Password Updated Successfully ✅")
+                    st.success("Password Updated Successfully ✅")
 
-                del st.session_state.otp
-                del st.session_state.otp_verified
-                del st.session_state.reset_email
+                    del st.session_state.otp
+                    del st.session_state.otp_verified
+                    del st.session_state.reset_email
+                    del st.session_state.show_reset
