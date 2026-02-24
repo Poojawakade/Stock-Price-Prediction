@@ -23,10 +23,6 @@ USER_DB = "users.csv"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "admin123"
 
-# -------- EMAIL CONFIG --------
-SENDER_EMAIL = "your_email@gmail.com"
-SENDER_PASSWORD = "your_16_digit_app_password"
-
 # =============================
 # PASSWORD HASHING
 # =============================
@@ -37,21 +33,31 @@ def verify_password(stored_password, provided_password):
     return stored_password == hash_password(provided_password)
 
 # =============================
-# SEND OTP EMAIL
+# SEND OTP EMAIL (GMAIL WORKING VERSION)
 # =============================
 def send_otp_email(receiver_email, otp):
-    subject = "Password Reset OTP"
-    body = f"Your OTP for password reset is: {otp}"
+    try:
+        sender_email = st.secrets["EMAIL"]
+        sender_password = st.secrets["EMAIL_PASSWORD"]
 
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = SENDER_EMAIL
-    msg["To"] = receiver_email
+        msg = MIMEText(f"Your OTP for password reset is: {otp}")
+        msg["Subject"] = "Password Reset OTP"
+        msg["From"] = sender_email
+        msg["To"] = receiver_email
 
-    server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
-    server.login(SENDER_EMAIL, SENDER_PASSWORD)
-    server.sendmail(SENDER_EMAIL, receiver_email, msg.as_string())
-    server.quit()
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        server.login(sender_email, sender_password)
+        server.sendmail(sender_email, receiver_email, msg.as_string())
+        server.quit()
+
+        return True
+
+    except Exception as e:
+        st.error(f"Email Error: {e}")
+        return False
 
 # =============================
 # TRAIN MODEL
@@ -153,13 +159,13 @@ if st.session_state.logged_in and st.session_state.role == "admin":
         st.rerun()
 
 # =================================================
-# USER LOGIN / REGISTER
+# USER LOGIN + FORGOT PASSWORD
 # =================================================
 elif menu == "User Login":
 
     option = st.radio("Select Option", ["New User", "Existing User"])
 
-    # ---------------- REGISTER ----------------
+    # REGISTER
     if option == "New User":
 
         st.subheader("📝 Register")
@@ -189,7 +195,7 @@ elif menu == "User Login":
                 new_user.to_csv(USER_DB, index=False)
                 st.success("Registered Successfully ✅")
 
-    # ---------------- LOGIN ----------------
+    # LOGIN
     elif option == "Existing User":
 
         st.subheader("🔐 User Login")
@@ -198,16 +204,12 @@ elif menu == "User Login":
         password = st.text_input("Password", type="password")
 
         col1, col2 = st.columns([3,1])
-
         with col2:
             if st.button("Forgot Password?"):
                 st.session_state.show_reset = True
 
         if st.button("Login"):
-
-            if not os.path.exists(USER_DB):
-                st.error("No users registered.")
-            else:
+            if os.path.exists(USER_DB):
                 users = pd.read_csv(USER_DB)
                 user_row = users[users["Username"] == username]
 
@@ -219,8 +221,10 @@ elif menu == "User Login":
                     st.success("Login Successful ✅")
                 else:
                     st.error("Invalid Credentials")
+            else:
+                st.error("No users registered.")
 
-        # ---------------- RESET FLOW ----------------
+        # RESET FLOW
         if "show_reset" in st.session_state and st.session_state.show_reset:
 
             st.divider()
@@ -229,31 +233,23 @@ elif menu == "User Login":
             reset_email = st.text_input("Enter Registered Email")
 
             if st.button("Send OTP"):
+                users = pd.read_csv(USER_DB)
+                user_row = users[users["Email"] == reset_email]
 
-                if os.path.exists(USER_DB):
-                    users = pd.read_csv(USER_DB)
-                    user_row = users[users["Email"] == reset_email]
+                if not user_row.empty:
+                    otp = str(random.randint(100000, 999999))
+                    st.session_state.otp = otp
+                    st.session_state.reset_email = reset_email
 
-                    if not user_row.empty:
-
-                        otp = str(random.randint(100000, 999999))
-                        st.session_state.otp = otp
-                        st.session_state.reset_email = reset_email
-
-                        try:
-                            send_otp_email(reset_email, otp)
-                            st.success("OTP Sent to Registered Email ✅")
-                        except Exception as e:
-                            st.error(f"Email sending failed: {e}")
-                    else:
-                        st.error("Email not found.")
+                    if send_otp_email(reset_email, otp):
+                        st.success("OTP Sent Successfully ✅")
+                else:
+                    st.error("Email not found.")
 
             if "otp" in st.session_state:
-
                 entered_otp = st.text_input("Enter OTP")
 
                 if st.button("Verify OTP"):
-
                     if entered_otp == st.session_state.otp:
                         st.session_state.otp_verified = True
                         st.success("OTP Verified ✅")
@@ -274,86 +270,9 @@ elif menu == "User Login":
 
                     users.to_csv(USER_DB, index=False)
 
+                    st.success("Password Updated Successfully ✅")
+
                     del st.session_state.otp
                     del st.session_state.otp_verified
                     del st.session_state.reset_email
                     del st.session_state.show_reset
-
-                    st.success("Password Updated Successfully ✅")
-
-# =================================================
-# USER DASHBOARD
-# =================================================
-if st.session_state.logged_in and st.session_state.role == "user":
-
-    st.title("📊 Stock Dashboard")
-
-    if not os.path.exists(DATA_PATH):
-        st.error("Dataset not uploaded by admin.")
-        st.stop()
-
-    df = pd.read_csv(DATA_PATH)
-    df["Date"] = pd.to_datetime(df["Date"])
-
-    # KPIs
-    st.subheader("📌 Market Overview")
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    col1.metric("Total Records", len(df))
-    col2.metric("Avg Close", round(df["Close"].mean(), 2))
-    col3.metric("Highest Price", round(df["High"].max(), 2))
-    col4.metric("Lowest Price", round(df["Low"].min(), 2))
-
-    st.divider()
-
-    # Stock Selection
-    stock_list = df["Stock"].unique()
-    selected_stock = st.selectbox("Select Stock", stock_list)
-    stock_df = df[df["Stock"] == selected_stock]
-
-    # Chart
-    st.subheader("📈 Historical Chart")
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=stock_df["Date"],
-        y=stock_df["Close"],
-        mode="lines",
-        name="Close"
-    ))
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # Prediction
-    if st.button("🔮 Predict Next 5 Days"):
-
-        if not os.path.exists(MODEL_PATH):
-            st.error("Model not trained.")
-            st.stop()
-
-        model = joblib.load(MODEL_PATH)
-        last_price = stock_df["Close"].values[-1]
-        predictions = predict_next_5_days(model, last_price)
-
-        st.subheader("📅 5-Day Forecast")
-
-        for i, p in enumerate(predictions):
-            st.write(f"Day {i+1}: ₹ {round(p,2)}")
-
-        avg_pred = np.mean(predictions)
-
-        if avg_pred > last_price * 1.02:
-            recommendation = "🟢 BUY"
-        elif avg_pred < last_price * 0.98:
-            recommendation = "🔴 SELL"
-        else:
-            recommendation = "🟡 HOLD"
-
-        st.subheader("📢 Recommendation")
-        st.success(recommendation)
-
-    if st.button("Logout"):
-        st.session_state.logged_in = False
-        st.session_state.role = None
-        st.rerun()
