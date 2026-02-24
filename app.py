@@ -12,7 +12,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 
 # =============================
-# CONFIGURATION
+# CONFIG
 # =============================
 st.set_page_config(page_title="Stock Prediction System", layout="wide")
 
@@ -25,7 +25,7 @@ ADMIN_PASSWORD = "admin123"
 
 # -------- EMAIL CONFIG --------
 SENDER_EMAIL = "your_email@gmail.com"
-SENDER_PASSWORD = "your_app_password"  # Gmail App Password
+SENDER_PASSWORD = "your_app_password"
 
 # =============================
 # PASSWORD HASHING
@@ -71,7 +71,7 @@ def train_model(df):
     return model.score(X_test, y_test)
 
 # =============================
-# PREDICT 5 DAYS
+# PREDICT
 # =============================
 def predict_next_5_days(model, last_price):
     predictions = []
@@ -85,28 +85,28 @@ def predict_next_5_days(model, last_price):
     return predictions
 
 # =============================
-# SESSION INIT
+# SESSION STATE INIT
 # =============================
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.role = None
 
 # =============================
-# MAIN MENU
+# MAIN TITLE
 # =============================
 st.title("📈 Stock Price Prediction System")
 
 menu = st.sidebar.selectbox("Select Role", ["Home", "Admin Login", "User Login"])
 
-# =================================================
+# =====================================================
 # HOME
-# =================================================
+# =====================================================
 if menu == "Home":
     st.write("Welcome to the AI Stock Prediction Platform 🚀")
 
-# =================================================
+# =====================================================
 # ADMIN LOGIN
-# =================================================
+# =====================================================
 elif menu == "Admin Login":
 
     st.subheader("🔐 Admin Login")
@@ -122,7 +122,9 @@ elif menu == "Admin Login":
         else:
             st.error("Invalid Credentials")
 
-# ---------------- ADMIN DASHBOARD ----------------
+# =============================
+# ADMIN DASHBOARD
+# =============================
 if st.session_state.logged_in and st.session_state.role == "admin":
 
     st.subheader("📂 Upload Dataset")
@@ -135,11 +137,13 @@ if st.session_state.logged_in and st.session_state.role == "admin":
         st.dataframe(df.head())
 
     if os.path.exists(DATA_PATH):
+
         df = pd.read_csv(DATA_PATH)
 
         st.subheader("🤖 Train Model")
 
         if st.button("Train Model"):
+
             if "Target_Next_Close" not in df.columns:
                 st.error("Dataset must contain 'Target_Next_Close'")
             else:
@@ -151,12 +155,12 @@ if st.session_state.logged_in and st.session_state.role == "admin":
         st.session_state.role = None
         st.rerun()
 
-# =================================================
-# USER LOGIN / REGISTER / RESET
-# =================================================
+# =====================================================
+# USER LOGIN / REGISTER
+# =====================================================
 elif menu == "User Login":
 
-    option = st.radio("Select Option", ["New User", "Existing User", "Forgot Password"])
+    option = st.radio("Select Option", ["New User", "Existing User"])
 
     # ---------------- REGISTER ----------------
     if option == "New User":
@@ -188,89 +192,112 @@ elif menu == "User Login":
                 new_user.to_csv(USER_DB, index=False)
                 st.success("Registered Successfully ✅")
 
-    # ---------------- LOGIN ----------------
+    # ---------------- LOGIN + FORGOT ----------------
     elif option == "Existing User":
 
-        st.subheader("🔐 User Login")
+        if "reset_mode" not in st.session_state:
+            st.session_state.reset_mode = False
 
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
+        # -------- LOGIN SCREEN --------
+        if not st.session_state.reset_mode:
 
-        if st.button("Login"):
+            st.subheader("🔐 User Login")
 
-            if not os.path.exists(USER_DB):
-                st.error("No users registered.")
-            else:
-                users = pd.read_csv(USER_DB)
-                user_row = users[users["Username"] == username]
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
 
-                if not user_row.empty and verify_password(
-                        user_row.iloc[0]["Password"], password):
+            col1, col2 = st.columns([3,1])
 
-                    st.session_state.logged_in = True
-                    st.session_state.role = "user"
-                    st.success("Login Successful ✅")
+            with col1:
+                login_btn = st.button("Login")
+
+            with col2:
+                if st.button("Forgot Password?"):
+                    st.session_state.reset_mode = True
+                    st.rerun()
+
+            if login_btn:
+
+                if not os.path.exists(USER_DB):
+                    st.error("No users registered.")
                 else:
-                    st.error("Invalid Credentials")
+                    users = pd.read_csv(USER_DB)
+                    user_row = users[users["Username"] == username]
 
-    # ---------------- FORGOT PASSWORD ----------------
-    elif option == "Forgot Password":
+                    if not user_row.empty and verify_password(
+                            user_row.iloc[0]["Password"], password):
 
-        st.subheader("🔑 Reset Password via OTP")
+                        st.session_state.logged_in = True
+                        st.session_state.role = "user"
+                        st.success("Login Successful ✅")
+                    else:
+                        st.error("Invalid Credentials")
 
-        username = st.text_input("Username")
+        # -------- RESET SCREEN --------
+        else:
 
-        if st.button("Send OTP"):
+            st.subheader("🔑 Reset Password")
 
-            if os.path.exists(USER_DB):
+            email = st.text_input("Enter Registered Email")
+
+            if st.button("Send OTP"):
+
                 users = pd.read_csv(USER_DB)
-                user_row = users[users["Username"] == username]
+                user_row = users[users["Email"] == email]
 
                 if not user_row.empty:
+
                     otp = str(random.randint(100000, 999999))
                     st.session_state.otp = otp
-                    st.session_state.reset_user = username
+                    st.session_state.reset_email = email
 
                     try:
-                        send_otp_email(user_row.iloc[0]["Email"], otp)
-                        st.success("OTP Sent to Registered Email ✅")
+                        send_otp_email(email, otp)
+                        st.success("OTP Sent to your Email ✅")
                     except:
                         st.error("Email sending failed.")
+
                 else:
-                    st.error("User not found.")
+                    st.error("Email not found.")
 
-        if "otp" in st.session_state:
-            entered_otp = st.text_input("Enter OTP")
+            if "otp" in st.session_state:
 
-            if st.button("Verify OTP"):
-                if entered_otp == st.session_state.otp:
-                    st.session_state.otp_verified = True
-                    st.success("OTP Verified ✅")
-                else:
-                    st.error("Invalid OTP")
+                entered_otp = st.text_input("Enter OTP")
 
-        if "otp_verified" in st.session_state and st.session_state.otp_verified:
-            new_password = st.text_input("New Password", type="password")
+                if st.button("Verify OTP"):
 
-            if st.button("Update Password"):
+                    if entered_otp == st.session_state.otp:
+                        st.session_state.otp_verified = True
+                        st.success("OTP Verified ✅")
+                    else:
+                        st.error("Invalid OTP")
 
-                users = pd.read_csv(USER_DB)
-                users.loc[
-                    users["Username"] == st.session_state.reset_user,
-                    "Password"
-                ] = hash_password(new_password)
+            if "otp_verified" in st.session_state and st.session_state.otp_verified:
 
-                users.to_csv(USER_DB, index=False)
+                new_password = st.text_input("New Password", type="password")
 
-                del st.session_state.otp
-                del st.session_state.otp_verified
-                del st.session_state.reset_user
+                if st.button("Update Password"):
 
-                st.success("Password Updated Successfully ✅")
+                    users = pd.read_csv(USER_DB)
 
-# =================================================
+                    users.loc[
+                        users["Email"] == st.session_state.reset_email,
+                        "Password"
+                    ] = hash_password(new_password)
+
+                    users.to_csv(USER_DB, index=False)
+
+                    for key in ["otp", "otp_verified", "reset_email"]:
+                        if key in st.session_state:
+                            del st.session_state[key]
+
+                    st.session_state.reset_mode = False
+                    st.success("Password Updated Successfully ✅")
+                    st.rerun()
+
+# =====================================================
 # USER DASHBOARD
-# =================================================
+# =====================================================
 if st.session_state.logged_in and st.session_state.role == "user":
 
     st.title("📊 Stock Dashboard")
@@ -294,12 +321,11 @@ if st.session_state.logged_in and st.session_state.role == "user":
 
     st.divider()
 
-    # Stock Selection
     stock_list = df["Stock"].unique()
     selected_stock = st.selectbox("Select Stock", stock_list)
+
     stock_df = df[df["Stock"] == selected_stock]
 
-    # Chart
     st.subheader("📈 Historical Chart")
 
     fig = go.Figure()
@@ -312,7 +338,6 @@ if st.session_state.logged_in and st.session_state.role == "user":
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Prediction
     if st.button("🔮 Predict Next 5 Days"):
 
         if not os.path.exists(MODEL_PATH):
@@ -321,6 +346,7 @@ if st.session_state.logged_in and st.session_state.role == "user":
 
         model = joblib.load(MODEL_PATH)
         last_price = stock_df["Close"].values[-1]
+
         predictions = predict_next_5_days(model, last_price)
 
         st.subheader("📅 5-Day Forecast")
