@@ -11,6 +11,13 @@ from email.mime.text import MIMEText
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 
+# Optional for local development
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except:
+    pass
+
 # =============================
 # CONFIGURATION
 # =============================
@@ -33,13 +40,34 @@ def verify_password(stored_password, provided_password):
     return stored_password == hash_password(provided_password)
 
 # =============================
-# SEND OTP EMAIL (GMAIL WORKING VERSION)
+# HYBRID EMAIL CONFIG
 # =============================
-def send_otp_email(receiver_email, otp):
+def get_email_credentials():
+    # 1️⃣ Try Streamlit Cloud secrets
     try:
-        sender_email = st.secrets["EMAIL"]
-        sender_password = st.secrets["EMAIL_PASSWORD"]
+        if "EMAIL" in st.secrets and "EMAIL_PASSWORD" in st.secrets:
+            return st.secrets["EMAIL"], st.secrets["EMAIL_PASSWORD"]
+    except:
+        pass
 
+    # 2️⃣ Try local .env
+    email = os.getenv("EMAIL")
+    password = os.getenv("EMAIL_PASSWORD")
+
+    if email and password:
+        return email, password
+
+    return None, None
+
+
+def send_otp_email(receiver_email, otp):
+    sender_email, sender_password = get_email_credentials()
+
+    if not sender_email or not sender_password:
+        st.error("❌ Email credentials not configured.")
+        return False
+
+    try:
         msg = MIMEText(f"Your OTP for password reset is: {otp}")
         msg["Subject"] = "Password Reset OTP"
         msg["From"] = sender_email
@@ -102,7 +130,6 @@ if "logged_in" not in st.session_state:
 # MAIN MENU
 # =============================
 st.title("📈 Stock Price Prediction System")
-
 menu = st.sidebar.selectbox("Select Role", ["Home", "Admin Login", "User Login"])
 
 # =================================================
@@ -159,7 +186,7 @@ if st.session_state.logged_in and st.session_state.role == "admin":
         st.rerun()
 
 # =================================================
-# USER LOGIN + FORGOT PASSWORD
+# USER LOGIN + RESET
 # =================================================
 elif menu == "User Login":
 
@@ -178,7 +205,6 @@ elif menu == "User Login":
         if st.button("Register"):
 
             hashed_password = hash_password(password)
-
             new_user = pd.DataFrame([[name, email, username, hashed_password]],
                                     columns=["Name", "Email", "Username", "Password"])
 
@@ -203,11 +229,6 @@ elif menu == "User Login":
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
 
-        col1, col2 = st.columns([3,1])
-        with col2:
-            if st.button("Forgot Password?"):
-                st.session_state.show_reset = True
-
         if st.button("Login"):
             if os.path.exists(USER_DB):
                 users = pd.read_csv(USER_DB)
@@ -215,7 +236,6 @@ elif menu == "User Login":
 
                 if not user_row.empty and verify_password(
                         user_row.iloc[0]["Password"], password):
-
                     st.session_state.logged_in = True
                     st.session_state.role = "user"
                     st.success("Login Successful ✅")
@@ -224,15 +244,13 @@ elif menu == "User Login":
             else:
                 st.error("No users registered.")
 
-        # RESET FLOW
-        if "show_reset" in st.session_state and st.session_state.show_reset:
+        st.divider()
+        st.subheader("🔑 Forgot Password")
 
-            st.divider()
-            st.subheader("🔑 Reset Password")
+        reset_email = st.text_input("Enter Registered Email")
 
-            reset_email = st.text_input("Enter Registered Email")
-
-            if st.button("Send OTP"):
+        if st.button("Send OTP"):
+            if os.path.exists(USER_DB):
                 users = pd.read_csv(USER_DB)
                 user_row = users[users["Email"] == reset_email]
 
@@ -245,34 +263,35 @@ elif menu == "User Login":
                         st.success("OTP Sent Successfully ✅")
                 else:
                     st.error("Email not found.")
+            else:
+                st.error("No users registered.")
 
-            if "otp" in st.session_state:
-                entered_otp = st.text_input("Enter OTP")
+        if "otp" in st.session_state:
+            entered_otp = st.text_input("Enter OTP")
 
-                if st.button("Verify OTP"):
-                    if entered_otp == st.session_state.otp:
-                        st.session_state.otp_verified = True
-                        st.success("OTP Verified ✅")
-                    else:
-                        st.error("Invalid OTP")
+            if st.button("Verify OTP"):
+                if entered_otp == st.session_state.otp:
+                    st.session_state.otp_verified = True
+                    st.success("OTP Verified ✅")
+                else:
+                    st.error("Invalid OTP")
 
-            if "otp_verified" in st.session_state and st.session_state.otp_verified:
+        if "otp_verified" in st.session_state and st.session_state.otp_verified:
 
-                new_password = st.text_input("New Password", type="password")
+            new_password = st.text_input("New Password", type="password")
 
-                if st.button("Update Password"):
+            if st.button("Update Password"):
 
-                    users = pd.read_csv(USER_DB)
-                    users.loc[
-                        users["Email"] == st.session_state.reset_email,
-                        "Password"
-                    ] = hash_password(new_password)
+                users = pd.read_csv(USER_DB)
+                users.loc[
+                    users["Email"] == st.session_state.reset_email,
+                    "Password"
+                ] = hash_password(new_password)
 
-                    users.to_csv(USER_DB, index=False)
+                users.to_csv(USER_DB, index=False)
 
-                    st.success("Password Updated Successfully ✅")
+                st.success("Password Updated Successfully ✅")
 
-                    del st.session_state.otp
-                    del st.session_state.otp_verified
-                    del st.session_state.reset_email
-                    del st.session_state.show_reset
+                del st.session_state.otp
+                del st.session_state.otp_verified
+                del st.session_state.reset_email
